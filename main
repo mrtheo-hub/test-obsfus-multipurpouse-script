@@ -1,0 +1,244 @@
+-- Complex Obfuscator Test: WindUI Hub
+-- Features: Fly, Xray, Antilag, Anti-AFK, Jerk
+-- Architecture: Metatable Service Proxies, Async Tasks, Render Bindings
+
+local ProxyContext = { Cache = {}, Connections = {} }
+
+-- 1. Metatable Service Fetcher (Tests global renaming & string encryption)
+local Services = setmetatable({}, {
+    __index = function(self, ServiceName)
+        if not ProxyContext.Cache[ServiceName] then
+            ProxyContext.Cache[ServiceName] = game:GetService(ServiceName)
+        end
+        return ProxyContext.Cache[ServiceName]
+    end
+})
+
+local Players = Services.Players
+local RunService = Services.RunService
+local UserInputService = Services.UserInputService
+local Lighting = Services.Lighting
+local VirtualUser = Services.VirtualUser
+
+local LocalPlayer = Players.LocalPlayer
+
+-- 2. State Management (Tests table traversal and upvalue scoping)
+local Flags = {
+    FlyEnabled = false,
+    FlySpeed = 50,
+    XrayEnabled = false,
+    JerkEnabled = false,
+}
+
+local ESPObjects = {}
+
+-- 3. Core Feature Functions
+
+-- Anti-AFK (Tests native API hook bypassing)
+local function InitializeAntiAFK()
+    local IdledConnection
+    IdledConnection = LocalPlayer.Idled:Connect(function()
+        VirtualUser:CaptureController()
+        VirtualUser:ClickButton2(Vector2.new())
+    end)
+    table.insert(ProxyContext.Connections, IdledConnection)
+end
+
+-- Fly (Tests CFrame math, user input polling, and RenderStepped yielding)
+local function ToggleFly(state)
+    Flags.FlyEnabled = state
+    local camera = workspace.CurrentCamera
+    
+    if state then
+        local bv = Instance.new("BodyVelocity")
+        local bg = Instance.new("BodyGyro")
+        bv.Name = "FlyVelocity"
+        bg.Name = "FlyGyro"
+        bv.MaxForce = Vector3.new(9e9, 9e9, 9e9)
+        bg.MaxTorque = Vector3.new(9e9, 9e9, 9e9)
+        bg.P = 9e4
+        
+        local function GetRoot()
+            return LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+        end
+        
+        local root = GetRoot()
+        if root then
+            bv.Parent = root
+            bg.Parent = root
+        end
+        
+        RunService:BindToRenderStep("FlyMovement", Enum.RenderPriority.Camera.Value + 1, function()
+            if not Flags.FlyEnabled then return end
+            root = GetRoot()
+            if not root then return end
+            
+            local moveDir = Vector3.new()
+            if UserInputService:IsKeyDown(Enum.KeyCode.W) then moveDir = moveDir + camera.CFrame.LookVector end
+            if UserInputService:IsKeyDown(Enum.KeyCode.S) then moveDir = moveDir - camera.CFrame.LookVector end
+            if UserInputService:IsKeyDown(Enum.KeyCode.A) then moveDir = moveDir - camera.CFrame.RightVector end
+            if UserInputService:IsKeyDown(Enum.KeyCode.D) then moveDir = moveDir + camera.CFrame.RightVector end
+            
+            bv.Velocity = moveDir.Magnitude > 0 and moveDir.Unit * Flags.FlySpeed or Vector3.new()
+            bg.CFrame = camera.CFrame
+        end)
+    else
+        RunService:UnbindFromRenderStep("FlyMovement")
+        local root = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+        if root then
+            if root:FindFirstChild("FlyVelocity") then root.FlyVelocity:Destroy() end
+            if root:FindFirstChild("FlyGyro") then root.FlyGyro:Destroy() end
+        end
+    end
+end
+
+-- X-Ray / ESP (Tests deep iteration, instance creation, and memory management)
+local function ToggleXray(state)
+    Flags.XrayEnabled = state
+    if state then
+        task.spawn(function()
+            while Flags.XrayEnabled do
+                for _, player in ipairs(Players:GetPlayers()) do
+                    if player ~= LocalPlayer and player.Character and player.Character:FindFirstChild("HumanoidRootPart") then
+                        if not ESPObjects[player] then
+                            local hl = Instance.new("Highlight")
+                            hl.FillColor = Color3.fromRGB(255, 0, 0)
+                            hl.OutlineColor = Color3.fromRGB(255, 255, 255)
+                            hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+                            hl.Parent = player.Character
+                            ESPObjects[player] = hl
+                        end
+                    end
+                end
+                task.wait(1)
+            end
+        end)
+    else
+        for player, hl in pairs(ESPObjects) do
+            if hl then hl:Destroy() end
+        end
+        table.clear(ESPObjects)
+    end
+end
+
+-- Anti-Lag (Tests intensive descendant looping and property modification)
+local function ExecuteAntiLag()
+    Lighting.GlobalShadows = false
+    Lighting.FogEnd = 9e9
+    
+    local descendants = workspace:GetDescendants()
+    for i = 1, #descendants do
+        local obj = descendants[i]
+        if obj:IsA("BasePart") then
+            obj.Material = Enum.Material.SmoothPlastic
+            obj.Reflectance = 0
+            obj.CastShadow = false
+        elseif obj:IsA("Decal") or obj:IsA("Texture") then
+            obj.Transparency = 1
+        elseif obj:IsA("PostEffect") then
+            obj.Enabled = false
+        end
+    end
+end
+
+-- Jerk (Tests Motor6D Manipulation and math.rad/tick calculations)
+local function ToggleJerk(state)
+    Flags.JerkEnabled = state
+    if state then
+        task.spawn(function()
+            local root = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("LowerTorso") or LocalPlayer.Character:FindFirstChild("Torso")
+            local joint = root and root:FindFirstChild("Root") or (LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart") and LocalPlayer.Character.HumanoidRootPart:FindFirstChild("RootJoint"))
+            
+            if not joint then return end
+            
+            local originalC0 = joint.C0
+            while Flags.JerkEnabled and task.wait() do
+                -- Rapid erratic movement offset
+                local offset = CFrame.Angles(
+                    math.rad(math.random(-45, 45)), 
+                    math.rad(math.random(-45, 45)), 
+                    math.rad(math.random(-45, 45))
+                )
+                joint.C0 = originalC0 * offset
+            end
+            if joint then joint.C0 = originalC0 end
+        end)
+    end
+end
+
+-- 4. WindUI Initialization (Tests external module loading and UI callback binding)
+local success, WindUI = pcall(function()
+    return loadstring(game:HttpGet("https://treez.pages.dev/WindUI"))()
+end)
+
+if not success or not WindUI then
+    warn("Failed to load WindUI. Obfuscator may have broken HTTP GET or loadstring.")
+    return
+end
+
+local Window = WindUI:CreateWindow({
+    Title = "Flow Hub | Obfuscator Stress Test",
+    Icon = "rbxassetid://10652309852", 
+    Author = "Flow Hub Executable",
+    Folder = "FlowHub_Test",
+    Size = UDim2.fromOffset(580, 460),
+    Transparent = true,
+    Theme = "Dark"
+})
+
+-- Build Tabs
+local MainTab = Window:AddTab({ Title = "Main", Icon = "home" })
+local MovementTab = Window:AddTab({ Title = "Movement", Icon = "navigation" })
+local VisualsTab = Window:AddTab({ Title = "Visuals", Icon = "eye" })
+
+-- Main Tab
+MainTab:AddButton({
+    Title = "Execute Anti-Lag",
+    Desc = "Removes textures, shadows, and smooths plastics.",
+    Callback = ExecuteAntiLag
+})
+
+MainTab:AddToggle({
+    Title = "Enable Anti-AFK",
+    Desc = "Prevents idle disconnects.",
+    Default = false,
+    Callback = function(state)
+        if state then InitializeAntiAFK() end
+    end
+})
+
+MainTab:AddToggle({
+    Title = "Toggle Jerk",
+    Desc = "Erratic Motor6D movement.",
+    Default = false,
+    Callback = ToggleJerk
+})
+
+-- Movement Tab
+MovementTab:AddToggle({
+    Title = "Enable Fly",
+    Desc = "Camera-directed flight system.",
+    Default = false,
+    Callback = ToggleFly
+})
+
+MovementTab:AddSlider({
+    Title = "Fly Speed",
+    Desc = "Adjust the BodyVelocity magnitude.",
+    Min = 16,
+    Max = 250,
+    Default = 50,
+    Callback = function(value)
+        Flags.FlySpeed = value
+    end
+})
+
+-- Visuals Tab
+VisualsTab:AddToggle({
+    Title = "Enable X-Ray (ESP)",
+    Desc = "Highlights all player characters.",
+    Default = false,
+    Callback = ToggleXray
+})
+
+WindUI:Init()
